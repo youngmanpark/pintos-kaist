@@ -3,9 +3,9 @@
 #include "vm/vm.h"
 #include "threads/malloc.h"
 #include "vm/inspect.h"
-#include <hash.h>
-#include <vaddr.h>
-#include <mmu.h>
+#include "include/lib/kernel/hash.h"
+#include "include/threads/vaddr.h"
+
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -55,6 +55,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
          * TODO: and then create "uninit" page struct by calling uninit_new. You
          * TODO: should modify the field after calling the uninit_new. */
 
+        
         /* TODO: Insert the page into the spt. */
     }
 err:
