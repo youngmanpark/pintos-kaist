@@ -5,9 +5,10 @@
 #include "vm/inspect.h"
 #include "include/lib/kernel/hash.h"
 #include "include/threads/vaddr.h"
+#include "string.h"
 
 struct list frame_table;
-
+void destructor(struct hash_elem *e, void *aux);
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void vm_init(void) {
@@ -63,9 +64,9 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
         /* TODO: Insert the page into the spt. */
         // hash_insert(&spt->hash_spt, &page->hash_elem);
-        page->writable=writable;
-        
-        return spt_insert_page(spt,page);
+        page->writable = writable;
+
+        return spt_insert_page(spt, page);
     }
 err:
     return false;
@@ -87,12 +88,11 @@ struct page *spt_find_page(struct supplemental_page_table *spt UNUSED, void *va 
 }
 
 /* Insert PAGE into spt with validation. */
-bool spt_insert_page(struct supplemental_page_table *spt UNUSED,
-                     struct page *page UNUSED) {
+bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *page UNUSED) {
     struct hash_elem *e;
 
-    e = hash_insert(&spt, &page->hash_elem);
-    return e != NULL ? true : false;
+    e = hash_insert(&spt->hash_spt, &page->hash_elem);
+    return e != NULL ? false : true;
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
@@ -150,7 +150,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     if (!page)
         return false;
 
-    return vm_claim_page(page);
+    return vm_do_claim_page(page);
 }
 
 /* Free the page.
@@ -193,14 +193,47 @@ void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
 }
 
 /* Copy supplemental page table from src to dst */
-bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-                                  struct supplemental_page_table *src UNUSED) {
+bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, struct supplemental_page_table *src UNUSED) {
+
+    struct hash_iterator i;
+
+    hash_first(&i, &src->hash_spt);
+    while (hash_next(&i)) {
+        struct page *parent_page = hash_entry(hash_cur(&i), struct page, hash_elem);
+        struct page *child_page;
+
+        enum vm_type page_type = page_get_type(parent_page);
+        void *upage = parent_page->va;
+        vm_initializer *init = parent_page->uninit.init;
+        void *aux = parent_page->uninit.aux;
+        bool writable = parent_page->writable;
+
+        if (parent_page->operations->type == VM_UNINIT) {
+            if (!vm_alloc_page_with_initializer(page_type, upage, writable, init, aux))
+                return false;
+        } else {
+            if (!vm_alloc_page(page_type, upage, writable))
+                return false;
+            if (!vm_claim_page(parent_page->va))
+                return false;
+            child_page = spt_find_page(dst, upage);
+            memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE);
+        }
+    }
+    return true;
 }
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
     /* TODO: Destroy all the supplemental_page_table hold by thread and
      * TODO: writeback all the modified contents to the storage. */
+
+    hash_clear(&spt->hash_spt, destructor);
+}
+
+void destructor(struct hash_elem *e, void *aux) {
+    struct page *page = hash_entry(e, struct page, hash_elem);
+    vm_dealloc_page(page);
 }
 /* Returns a hash value for page p. */
 unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED) {
@@ -209,8 +242,7 @@ unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED) {
 }
 
 /* Returns true if page a precedes page b. */
-bool page_less(const struct hash_elem *a_,
-               const struct hash_elem *b_, void *aux UNUSED) {
+bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED) {
     const struct page *a = hash_entry(a_, struct page, hash_elem);
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 

@@ -722,6 +722,7 @@ lazy_load_segment(struct page *page, void *aux) {
     file_seek(file,offset);
     /* Load this page. */
     if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes)
+
         return false;
 
     memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
