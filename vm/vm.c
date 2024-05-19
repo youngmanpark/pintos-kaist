@@ -5,6 +5,7 @@
 #include "vm/inspect.h"
 #include "include/lib/kernel/hash.h"
 #include "include/threads/vaddr.h"
+#include "threads/mmu.h"
 #include "string.h"
 
 struct list frame_table;
@@ -125,7 +126,12 @@ static struct frame *vm_get_frame(void) {
     struct frame *frame = NULL;
 
     frame = calloc(1, sizeof(struct frame));
-    frame->kva = palloc_get_page(PAL_USER);
+    frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
+    if (!frame->kva)
+    {
+        PANIC ("todo");
+    }
+    
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -167,6 +173,8 @@ bool vm_claim_page(void *va UNUSED) {
 
     /* TODO: Fill this function */
     page = spt_find_page(&current->spt, va);
+    if (!page)
+        return false;
     return vm_do_claim_page(page);
 }
 
@@ -181,7 +189,8 @@ static bool vm_do_claim_page(struct page *page) {
     page->frame = frame;
 
     /* TODO: Insert page table entry to map page's VA to frame's PA. */
-    pml4_set_page(pml4, page->va, frame->kva, page->writable);
+    if (!pml4_set_page(pml4, page->va, frame->kva, page->writable))
+        return false;
 
     return swap_in(page, frame->kva);
 }
