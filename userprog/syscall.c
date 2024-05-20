@@ -67,8 +67,12 @@ void syscall_init(void) {
 /* The main system call interface */
 void syscall_handler(struct intr_frame *f UNUSED) {
     uint64_t syscall_num = f->R.rax;
-    // TODO: Your implementation goes here.
     struct thread *curr = thread_current();
+
+#ifdef VM
+    curr->rsp = f->rsp; // 추가
+#endif
+
     switch (syscall_num) {
     case SYS_HALT:
         power_off(); /* Halt the operating system. */

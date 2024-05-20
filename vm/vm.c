@@ -127,11 +127,9 @@ static struct frame *vm_get_frame(void) {
 
     frame = calloc(1, sizeof(struct frame));
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
-    if (!frame->kva)
-    {
-        PANIC ("todo");
+    if (!frame->kva) {
+        PANIC("todo");
     }
-    
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -140,6 +138,8 @@ static struct frame *vm_get_frame(void) {
 
 /* Growing the stack. */
 static void vm_stack_growth(void *addr UNUSED) {
+    vm_alloc_page(VM_ANON | VM_MARKER_0, addr, 1);
+    vm_claim_page(addr);
 }
 
 /* Handle the fault on write_protected page */
@@ -150,13 +150,24 @@ static bool vm_handle_wp(struct page *page UNUSED) {
 bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
     struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
     struct page *page = spt_find_page(spt, addr);
-    /* TODO: Validate the fault */
-    /* TODO: Your code goes here */
+    void *rsp = f->rsp;
 
-    if (!page)
+    if (addr == NULL || is_kernel_vaddr(addr))
         return false;
 
-    return vm_do_claim_page(page);
+    if (not_present) {
+        rsp = user ? f->rsp : thread_current()->rsp;
+        if (USER_STACK > addr && addr >= USER_STACK - (1 << 20) && addr >= rsp-8) {
+            vm_stack_growth(pg_round_down(addr));
+            return true;
+        }
+        if (!page)
+            return false;
+        if (write && !page->writable)
+            return false;
+        return vm_do_claim_page(page);
+    }
+    return false;
 }
 
 /* Free the page.
