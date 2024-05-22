@@ -35,6 +35,7 @@ void close(int fd);
 
 int dup2(int oldfd, int newfd);
 
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 /* lock for access file_sys code */
 struct lock file_lock;
 
@@ -118,6 +119,9 @@ void syscall_handler(struct intr_frame *f UNUSED) {
         break;
     case SYS_DUP2:
         f->R.rax = dup2(f->R.rdi, f->R.rsi);
+        break;
+    case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
         break;
     default:
         break;
@@ -372,4 +376,26 @@ int dup2(int oldfd, int newfd) {
     list_push_back(&old_root_fd->dup_list, &new_fd->elem);
 
     return newfd;
+}
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+    struct file_descriptor *root_fd;
+    struct file *file = get_fd(fd, &root_fd)->file;
+
+    if (pg_round_down(offset) != offset)
+        return NULL;
+
+    if (addr == NULL || !is_user_vaddr(addr) || !is_user_vaddr(addr + length) || pg_round_down(addr) != addr)
+        return NULL;
+
+    if (spt_find_page(&thread_current()->spt, addr) != NULL)
+        return NULL;
+
+    if (file == NULL || file_length(file) <= 0)
+        return NULL;
+        
+    if ((int)length <= 0)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
 }
