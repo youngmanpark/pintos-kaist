@@ -20,6 +20,7 @@ struct load_aux {
     off_t offset;
     size_t page_read_bytes;
     size_t page_zero_bytes;
+    size_t length;
 };
 
 bool lazy_load_segment(struct page *page, void *aux);

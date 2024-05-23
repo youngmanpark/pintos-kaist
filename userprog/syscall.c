@@ -35,7 +35,10 @@ void close(int fd);
 
 int dup2(int oldfd, int newfd);
 
+void check_buffer(uint64_t *buffer);
+
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
 /* lock for access file_sys code */
 struct lock file_lock;
 
@@ -122,6 +125,9 @@ void syscall_handler(struct intr_frame *f UNUSED) {
         break;
     case SYS_MMAP:
         f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+    case SYS_MUNMAP:
+        munmap(f->R.rdi);
         break;
     default:
         break;
@@ -291,7 +297,11 @@ int read(int fd, void *buffer, unsigned length) {
     int result = -1;
 
     check_addr(buffer);
-
+    for (unsigned i = 0; i < length; i += PGSIZE) {
+        check_buffer((uint8_t *)buffer + i);
+    }
+    check_buffer((uint8_t *)buffer + length - 1);
+    
     find_fd = get_fd(fd, &root_fd);
     if (find_fd != NULL) {
         if (find_fd->_stdin)
@@ -378,6 +388,12 @@ int dup2(int oldfd, int newfd) {
     return newfd;
 }
 
+void check_buffer(uint64_t *buffer) {
+    struct page *p = spt_find_page(&thread_current()->spt, buffer);
+    if (!p->writable)
+        exit(-1);
+}
+
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
     struct file_descriptor *root_fd;
     struct file *file = get_fd(fd, &root_fd)->file;
@@ -398,4 +414,8 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
         return NULL;
 
     return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap(void *addr) {
+    do_munmap(addr);
 }

@@ -21,6 +21,7 @@ void vm_init(void) {
     register_inspect_intr();
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
+     list_init(&frame_table);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -57,7 +58,8 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
          * TODO: and then create "uninit" page struct by calling uninit_new. You
          * TODO: should modify the field after calling the uninit_new. */
         page = calloc(1, sizeof(struct page));
-
+        if (!page)
+            return false;
         if (VM_TYPE(type) == VM_ANON)
             uninit_new(page, upage, init, type, aux, anon_initializer);
         else if (VM_TYPE(type) == VM_FILE)
@@ -127,9 +129,10 @@ static struct frame *vm_get_frame(void) {
 
     frame = calloc(1, sizeof(struct frame));
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
-    if (!frame->kva) {
+    if (!frame->kva) 
         PANIC("todo");
-    }
+    
+    list_push_back(&frame_table,&frame->frame_elem);
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -138,7 +141,7 @@ static struct frame *vm_get_frame(void) {
 
 /* Growing the stack. */
 static void vm_stack_growth(void *addr UNUSED) {
-    vm_alloc_page(VM_ANON | VM_MARKER_0, addr, 1);
+    vm_alloc_page(VM_ANON | VM_MARKER_0, pg_round_down(addr), 1);
     vm_claim_page(addr);
 }
 
