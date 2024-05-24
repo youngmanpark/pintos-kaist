@@ -42,16 +42,16 @@ static bool file_backed_swap_in(struct page *page, void *kva)
     struct file *file = aux->file;
     off_t offset = aux->offset;
     size_t page_read_bytes = aux->page_read_bytes;
-    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+    size_t page_zero_bytes = aux->page_zero_bytes;
 
     file_seek(file, offset);
 
-    if (file_read(file, kva, page_read_bytes) != (int)page_read_bytes)
+    if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes)
     {
         return false;
     }
 
-    memset(kva + page_read_bytes, 0, page_zero_bytes);
+    memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
 
     return true;
 }
@@ -68,11 +68,12 @@ static bool file_backed_swap_out(struct page *page)
     // 사용 되었던 페이지(dirty page)인지 체크
     if (pml4_is_dirty(thread_current()->pml4, page->va))
     {
-        file_write_at(aux->file, page->va, aux->page_read_bytes, aux->offset);
+        file_write_at(aux->file, page->frame->kva, aux->page_read_bytes, aux->offset);
         pml4_set_dirty(thread_current()->pml4, page->va, 0);
     }
-
+    page->frame = NULL;
     pml4_clear_page(thread_current()->pml4, page->va);
+    return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
