@@ -21,7 +21,7 @@ void vm_init(void) {
     register_inspect_intr();
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
-     list_init(&frame_table);
+    list_init(&frame_table);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -106,9 +106,25 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 /* Get the struct frame, that will be evicted. */
 static struct frame *vm_get_victim(void) {
     struct frame *victim = NULL;
+    struct list_elem *e;
+    struct frame *cur;
     /* TODO: The policy for eviction is up to you. */
+    for (e = list_begin(&frame_table); e != list_end(&frame_table);) {
+        victim = list_entry(e, struct frame, frame_elem);
+        if (pml4_is_accessed(thread_current()->pml4, victim->page->va))
+            pml4_set_accessed(thread_current()->pml4, victim->page->va, 0);
+        else {
+            list_remove(e);
 
-    return victim;
+            return victim;
+        }
+        if (e->next == list_end(&frame_table))
+            e = list_begin(&frame_table);
+        else
+            e = list_next(e);
+    }
+
+    return NULL;
 }
 
 /* Evict one page and return the corresponding frame.
@@ -116,7 +132,12 @@ static struct frame *vm_get_victim(void) {
 static struct frame *vm_evict_frame(void) {
     struct frame *victim UNUSED = vm_get_victim();
     /* TODO: swap out the victim and return the evicted frame. */
-
+    if (!victim)
+        return NULL;
+    if (swap_out(victim->page)) {
+        palloc_free_page(victim->kva);
+        free(victim);
+    }
     return NULL;
 }
 
@@ -129,10 +150,10 @@ static struct frame *vm_get_frame(void) {
 
     frame = calloc(1, sizeof(struct frame));
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
-    if (!frame->kva) 
-        PANIC("todo");
-    
-    list_push_back(&frame_table,&frame->frame_elem);
+    if (!frame->kva)
+        vm_evict_frame();
+
+    list_push_back(&frame_table, &frame->frame_elem);
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -160,7 +181,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
     if (not_present) {
         rsp = user ? f->rsp : thread_current()->rsp;
-        if (USER_STACK > addr && addr >= USER_STACK - (1 << 20) && addr >= rsp-8) {
+        if (USER_STACK > addr && addr >= USER_STACK - (1 << 20) && addr >= rsp - 8) {
             vm_stack_growth(pg_round_down(addr));
             return true;
         }
