@@ -24,16 +24,17 @@ static const struct page_operations anon_ops = {
 };
 
 /* Initialize the data for anonymous pages */
-void vm_anon_init(void) {
+void vm_anon_init(void)
+{
     /* TODO: Set up the swap_disk. */
     swap_disk = disk_get(1, 1);
     size_t swap_size = disk_size(swap_disk) / (PGSIZE / DISK_SECTOR_SIZE);
     swap_table = bitmap_create(swap_size);
-    bitmap_set_all(swap_table, true);
 }
 
 /* Initialize the file mapping */
-bool anon_initializer(struct page *page, enum vm_type type, void *kva) {
+bool anon_initializer(struct page *page, enum vm_type type, void *kva)
+{
     /* Set up the handler */
     page->operations = &anon_ops;
 
@@ -42,36 +43,54 @@ bool anon_initializer(struct page *page, enum vm_type type, void *kva) {
 
 /* Swap in the page by read contents from the swap disk. */
 static bool
-anon_swap_in(struct page *page, void *kva) {
+anon_swap_in(struct page *page, void *kva)
+{
     struct anon_page *anon_page = &page->anon;
     int slot_no = page->slot_no;
 
-    for (int i = 0; i < 8; i++)
-        disk_read(swap_disk, slot_no * 8 + i, kva + (i * DISK_SECTOR_SIZE));
+    if (bitmap_test(swap_table, slot_no) == false)
+    {
+        return false;
+    }
+
+    for (int i = 0; i < 8; ++i)
+    {
+        disk_read(swap_disk, (slot_no * 8) + i, kva + (DISK_SECTOR_SIZE * i));
+    }
+
     bitmap_set(swap_table, slot_no, false);
+
+    return true;
 }
 
 /* Swap out the page by writing contents to the swap disk. */
 static bool
-anon_swap_out(struct page *page) {
+anon_swap_out(struct page *page)
+{
     struct anon_page *anon_page = &page->anon;
     int slot_no = bitmap_scan(swap_table, 0, 1, false);
+
     if (slot_no == BITMAP_ERROR)
+    {
         return false;
+    }
 
-    page->slot_no = slot_no;
-
-    for (int i = 0; i < 8; i++)
-        disk_write(swap_disk, slot_no * 8 + i, page->frame->kva + DISK_SECTOR_SIZE * i);
+    for (int i = 0; i < 8; ++i)
+    {
+        disk_write(swap_disk, (slot_no * 8) + i, page->va + (DISK_SECTOR_SIZE * i));
+    }
 
     bitmap_set(swap_table, slot_no, true);
     pml4_clear_page(thread_current()->pml4, page->va);
+
+    page->slot_no = slot_no;
 
     return true;
 }
 
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
 static void
-anon_destroy(struct page *page) {
+anon_destroy(struct page *page)
+{
     struct anon_page *anon_page = &page->anon;
 }

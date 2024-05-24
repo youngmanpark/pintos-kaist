@@ -18,11 +18,13 @@ static const struct page_operations file_ops = {
 };
 
 /* The initializer of file vm */
-void vm_file_init(void) {
+void vm_file_init(void)
+{
 }
 
 /* Initialize the file backed page */
-bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
+bool file_backed_initializer(struct page *page, enum vm_type type, void *kva)
+{
     /* Set up the handler */
     page->operations = &file_ops;
 
@@ -30,47 +32,63 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 }
 
 /* Swap in the page by read contents from the file. */
-static bool file_backed_swap_in(struct page *page, void *kva) {
+static bool file_backed_swap_in(struct page *page, void *kva)
+{
     struct file_page *file_page UNUSED = &page->file;
-    struct load_aux *aux = page->uninit.aux;
-
     if (page == NULL)
         return false;
+    struct load_aux *aux = page->uninit.aux;
 
-    file_seek(aux->file, aux->offset);
-    file_read(aux->file, page->frame->kva, aux->page_read_bytes);
+    struct file *file = aux->file;
+    off_t offset = aux->offset;
+    size_t page_read_bytes = aux->page_read_bytes;
+    size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-    memset (kva + aux->page_read_bytes, 0, aux->page_zero_bytes);
+    file_seek(file, offset);
+
+    if (file_read(file, kva, page_read_bytes) != (int)page_read_bytes)
+    {
+        return false;
+    }
+
+    memset(kva + page_read_bytes, 0, page_zero_bytes);
+
     return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
-static bool file_backed_swap_out(struct page *page) {
+static bool file_backed_swap_out(struct page *page)
+{
     struct file_page *file_page UNUSED = &page->file;
     struct load_aux *aux = page->uninit.aux;
 
     if (page == NULL)
         return false;
 
-    if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-        file_write_at(aux->file, page->frame->kva, aux->page_read_bytes, aux->offset);
+    // 사용 되었던 페이지(dirty page)인지 체크
+    if (pml4_is_dirty(thread_current()->pml4, page->va))
+    {
+        file_write_at(aux->file, page->va, aux->page_read_bytes, aux->offset);
         pml4_set_dirty(thread_current()->pml4, page->va, 0);
     }
+
     pml4_clear_page(thread_current()->pml4, page->va);
-    return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
-static void file_backed_destroy(struct page *page) {
+static void file_backed_destroy(struct page *page)
+{
     struct load_aux *aux = page->uninit.aux;
     struct thread *curr = thread_current();
 
-    if (pml4_is_dirty(curr->pml4, page->va)) {
+    if (pml4_is_dirty(curr->pml4, page->va))
+    {
         file_write_at(aux->file, page->va, aux->page_read_bytes, aux->offset);
         pml4_set_dirty(curr->pml4, page->va, 0);
     }
 
-    if (page->frame) {
+    if (page->frame)
+    {
         list_remove(&page->frame->frame_elem);
         page->frame->page = NULL;
         free(page->frame);
@@ -81,7 +99,8 @@ static void file_backed_destroy(struct page *page) {
 
 /* Do the mmap */
 void *
-do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
+do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset)
+{
     void *upage = addr;
     struct file *file_for_map = file_reopen(file);
     size_t read_bytes = file_length(file_for_map) < length ? file_length(file_for_map) : length;
@@ -90,7 +109,8 @@ do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(offset % PGSIZE == 0);
-    while (read_bytes > 0 || zero_bytes > 0) {
+    while (read_bytes > 0 || zero_bytes > 0)
+    {
         /* Do calculate how to fill this page.
          * We will read PAGE_READ_BYTES bytes from FILE
          * and zero the final PAGE_ZERO_BYTES bytes. */
@@ -119,14 +139,17 @@ do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset
 }
 
 /* Do the munmap */
-void do_munmap(void *addr) {
+void do_munmap(void *addr)
+{
     struct thread *curr = thread_current();
     struct page *page = spt_find_page(&curr->spt, addr);
     struct load_aux *aux = page->uninit.aux;
     int map_pg_cnt = ((aux->length) % PGSIZE == 0) ? (aux->length / PGSIZE) : (aux->length / PGSIZE + 1);
 
-    while (map_pg_cnt != 0) {
-        if (page) {
+    while (map_pg_cnt != 0)
+    {
+        if (page)
+        {
             destroy(page);
         }
         addr += PGSIZE;
