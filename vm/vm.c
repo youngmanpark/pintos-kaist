@@ -21,7 +21,7 @@ void vm_init(void) {
     register_inspect_intr();
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
-     list_init(&frame_table);
+    list_init(&frame_table);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -103,21 +103,51 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
     return true;
 }
 
+struct list_elem *start;
 /* Get the struct frame, that will be evicted. */
-static struct frame *vm_get_victim(void) {
+static struct frame *vm_get_victim(void)
+{
     struct frame *victim = NULL;
-    /* TODO: The policy for eviction is up to you. */
+    struct thread *curr = thread_current();
+    struct list_elem *e = start;
+
+    for (start = e; start != list_end(&frame_table); start = list_next(start))
+    {
+        victim = list_entry(start, struct frame, frame_elem);
+        if (pml4_is_accessed(curr->pml4, victim->page->va))
+            pml4_set_accessed(curr->pml4, victim->page->va, 0);
+        else
+            return victim;
+    }
+
+    for (start = list_begin(&frame_table); start != e; start = list_next(start))
+    {
+        victim = list_entry(start, struct frame, frame_elem);
+        if (pml4_is_accessed(curr->pml4, victim->page->va))
+            pml4_set_accessed(curr->pml4, victim->page->va, 0);
+        else
+            return victim;
+    }
+    // victim= list_entry(list_begin(&frame_table),struct frame, frame_elem);
 
     return victim;
 }
 
+
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *vm_evict_frame(void) {
-    struct frame *victim UNUSED = vm_get_victim();
+    struct frame *victim  = vm_get_victim();
     /* TODO: swap out the victim and return the evicted frame. */
+    printf("fuckkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk");
 
-    return NULL;
+    if (victim->page)
+        swap_out(victim->page);
+
+    // list_remove(&victim->frame_elem);
+    victim->page = NULL;
+
+    return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -129,10 +159,12 @@ static struct frame *vm_get_frame(void) {
 
     frame = calloc(1, sizeof(struct frame));
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
-    if (!frame->kva) 
-        PANIC("todo");
-    
-    list_push_back(&frame_table,&frame->frame_elem);
+    if (!frame->kva) {
+        free(frame);
+        frame = vm_evict_frame();
+    } else
+        list_push_back(&frame_table, &frame->frame_elem);
+    frame->page = NULL;
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -160,7 +192,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
     if (not_present) {
         rsp = user ? f->rsp : thread_current()->rsp;
-        if (USER_STACK > addr && addr >= USER_STACK - (1 << 20) && addr >= rsp-8) {
+        if (USER_STACK > addr && addr >= USER_STACK - (1 << 20) && addr >= rsp - 8) {
             vm_stack_growth(pg_round_down(addr));
             return true;
         }
@@ -271,3 +303,13 @@ bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux
 
     return a->va < b->va;
 }
+// void delete_frame(struct frame *frame) {
+//     ASSERT(frame != NULL);
+//     ASSERT(frame->page != NULL);
+
+
+//     list_remove(&frame->frame_elem);
+
+//     palloc_free_page(frame->kva);
+//     free(frame);
+// }
