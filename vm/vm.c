@@ -9,7 +9,7 @@
 #include "string.h"
 
 struct list frame_table;
-struct list_elem *start;
+struct lock frame_table_lock;
 void destructor(struct hash_elem *e, void *aux);
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -24,7 +24,7 @@ void vm_init(void)
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
     list_init(&frame_table);
-    start = list_begin(&frame_table);
+    lock_init(&frame_table_lock);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -118,26 +118,26 @@ static struct frame *vm_get_victim(void)
 {
     struct frame *victim = NULL;
     struct thread *curr = thread_current();
-    struct list_elem *e = start;
 
-    for (start = e; start != list_end(&frame_table); start = list_next(start))
+    lock_acquire(&frame_table_lock);
+    struct list_elem *start = list_begin(&frame_table);
+    for (start; start != list_end(&frame_table); start = list_next(start))
     {
         victim = list_entry(start, struct frame, frame_elem);
+        if (victim->page == NULL) // frame에 할당된 페이지가 없는 경우 (page가 destroy된 경우 )
+        {
+            lock_release(&frame_table_lock);
+            return victim;
+        }
         if (pml4_is_accessed(curr->pml4, victim->page->va))
             pml4_set_accessed(curr->pml4, victim->page->va, 0);
         else
+        {
+            lock_release(&frame_table_lock);
             return victim;
+        }
     }
-
-    for (start = list_begin(&frame_table); start != e; start = list_next(start))
-    {
-        victim = list_entry(start, struct frame, frame_elem);
-        if (pml4_is_accessed(curr->pml4, victim->page->va))
-            pml4_set_accessed(curr->pml4, victim->page->va, 0);
-        else
-            return victim;
-    }
-
+    lock_release(&frame_table_lock);
     return victim;
 }
 
@@ -171,7 +171,9 @@ static struct frame *vm_get_frame(void)
         return frame;
     }
 
+    lock_acquire(&frame_table_lock);
     list_push_back(&frame_table, &frame->frame_elem);
+    lock_release(&frame_table_lock);
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);

@@ -8,7 +8,7 @@
 #include "threads/synch.h"
 
 struct bitmap *swap_table;
-
+struct lock swap_table_lock;
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
 static bool anon_swap_in(struct page *page, void *kva);
@@ -27,6 +27,7 @@ static const struct page_operations anon_ops = {
 void vm_anon_init(void)
 {
     /* TODO: Set up the swap_disk. */
+    lock_init(&swap_table_lock);
     swap_disk = disk_get(1, 1);
     size_t swap_size = disk_size(swap_disk) / (PGSIZE / DISK_SECTOR_SIZE);
     swap_table = bitmap_create(swap_size);
@@ -47,9 +48,10 @@ anon_swap_in(struct page *page, void *kva)
 {
     struct anon_page *anon_page = &page->anon;
     int slot_no = page->slot_no;
-
+    lock_acquire(&swap_table_lock);
     if (bitmap_test(swap_table, slot_no) == false)
     {
+        lock_release(&swap_table_lock);
         return false;
     }
 
@@ -59,7 +61,7 @@ anon_swap_in(struct page *page, void *kva)
     }
 
     bitmap_set(swap_table, slot_no, false);
-
+    lock_release(&swap_table_lock);
     return true;
 }
 
@@ -68,6 +70,7 @@ static bool
 anon_swap_out(struct page *page)
 {
     struct anon_page *anon_page = &page->anon;
+    lock_acquire(&swap_table_lock);
     int slot_no = bitmap_scan(swap_table, 0, 1, false);
 
     if (slot_no == BITMAP_ERROR)
@@ -84,7 +87,7 @@ anon_swap_out(struct page *page)
     pml4_clear_page(thread_current()->pml4, page->va);
 
     page->slot_no = slot_no;
-
+    lock_release(&swap_table_lock);
     return true;
 }
 
