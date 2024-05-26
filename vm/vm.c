@@ -7,6 +7,7 @@
 #include "include/threads/vaddr.h"
 #include "threads/mmu.h"
 #include "string.h"
+#include "userprog/process.h"
 
 struct list frame_table;
 struct lock frame_table_lock;
@@ -57,7 +58,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
     if (spt_find_page(spt, upage) == NULL) {
         page = calloc(1, sizeof(struct page));
-        
+
         if (!page)
             return false;
         if (VM_TYPE(type) == VM_ANON)
@@ -131,8 +132,12 @@ static struct frame *vm_get_victim(void) {
 static struct frame *vm_evict_frame(void) {
     struct frame *victim = vm_get_victim();
     /* TODO: swap out the victim and return the evicted frame. */
-    if (victim->page)
-        swap_out(victim->page);
+    if (swap_out(victim->page)) {
+        victim->page = NULL;
+        memset(victim->kva, 0, PGSIZE);
+        victim->ref_cnt = 1;
+        return victim;
+    }
 
     return victim;
 }
@@ -147,6 +152,7 @@ static struct frame *vm_get_frame(void) {
     frame = calloc(1, sizeof(struct frame));
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
     frame->page = NULL;
+    frame->ref_cnt = 1;
     if (frame->kva == NULL) {
         frame = vm_evict_frame();
         frame->page = NULL;
@@ -170,6 +176,24 @@ static void vm_stack_growth(void *addr UNUSED) {
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {
+    if (!page->copy_on_write)
+        return false;
+    if (page->frame->ref_cnt > 1) {
+        struct frame *new_frame = vm_get_frame();
+        if (!new_frame)
+            return false;
+        memcpy(new_frame->kva, page->frame->kva, PGSIZE);
+        lock_acquire(&frame_table_lock);
+        page->frame->ref_cnt--;
+        page->frame = new_frame;
+        page->frame->ref_cnt = 1;
+        lock_release(&frame_table_lock);
+        pml4_clear_page(thread_current()->pml4, page->va);
+    }
+    page->writable = true;
+    pml4_set_page(thread_current()->pml4, page->va, page->frame->kva, true);
+
+    return true;
 }
 
 /* Return true on success */
@@ -192,7 +216,10 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
         if (write && !page->writable)
             return false;
         return vm_do_claim_page(page);
-    }
+    } 
+    // else
+    //     return vm_handle_wp(page);
+
     return false;
 }
 
@@ -251,20 +278,38 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
         enum vm_type page_type = page_get_type(parent_page);
         void *upage = parent_page->va;
         vm_initializer *init = parent_page->uninit.init;
-        void *aux = parent_page->uninit.aux;
+        struct load_aux *aux = parent_page->uninit.aux;
         bool writable = parent_page->writable;
 
         if (parent_page->operations->type == VM_UNINIT) {
-            if (!vm_alloc_page_with_initializer(page_type, upage, writable, init, aux))
-                return false;
-        } else {
-            if (!vm_alloc_page(page_type, upage, writable))
-                return false;
-            if (!vm_claim_page(parent_page->va))
-                return false;
-            child_page = spt_find_page(dst, upage);
-            memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE);
+            vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, aux);
+            continue;
         }
+        if (parent_page->operations->type == VM_FILE) {
+            // struct load_aux *file_aux = malloc(sizeof(struct load_aux));
+            // file_aux=aux;
+            if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, NULL, aux))
+                return false;
+            continue;
+        }
+
+        if (!vm_alloc_page(page_type, upage, writable))
+            return false;
+
+        child_page = spt_find_page(dst, upage);
+
+        child_page->operations = parent_page->operations;
+        child_page->frame = parent_page->frame;
+        child_page->writable = false;
+        parent_page->writable = false;
+        child_page->copy_on_write = true;
+        parent_page->copy_on_write = true;
+
+        lock_acquire(&frame_table_lock);
+        parent_page->frame->ref_cnt++;
+        lock_release(&frame_table_lock);
+
+        pml4_set_page(thread_current()->pml4, child_page->va, child_page->frame->kva, child_page->writable);
     }
     return true;
 }
@@ -290,4 +335,19 @@ bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 
     return a->va < b->va;
+}
+void free_frame(struct frame *frame) {
+    lock_acquire(&frame_table_lock);
+
+    if (frame->ref_cnt > 1) {
+        frame->ref_cnt--;
+        lock_release(&frame_table_lock);
+        return;
+    }
+
+    list_remove(&frame->frame_elem);
+    palloc_free_page(frame->kva);
+    free(frame);
+
+    lock_release(&frame_table_lock);
 }
