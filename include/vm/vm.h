@@ -45,7 +45,7 @@ struct page {
     const struct page_operations *operations;
     void *va;            /* Address in terms of user space */
     struct frame *frame; /* Back reference for frame */
-
+    size_t slot_no;
     /* Your implementation */
     struct hash_elem hash_elem;
     bool writable ;
