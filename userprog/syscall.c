@@ -35,6 +35,10 @@ void close(int fd);
 
 int dup2(int oldfd, int newfd);
 
+void check_buffer(uint64_t *buffer);
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
 /* lock for access file_sys code */
 struct lock file_lock;
 
@@ -67,8 +71,12 @@ void syscall_init(void) {
 /* The main system call interface */
 void syscall_handler(struct intr_frame *f UNUSED) {
     uint64_t syscall_num = f->R.rax;
-    // TODO: Your implementation goes here.
     struct thread *curr = thread_current();
+
+#ifdef VM
+    curr->rsp = f->rsp; // 추가
+#endif
+
     switch (syscall_num) {
     case SYS_HALT:
         power_off(); /* Halt the operating system. */
@@ -115,13 +123,19 @@ void syscall_handler(struct intr_frame *f UNUSED) {
     case SYS_DUP2:
         f->R.rax = dup2(f->R.rdi, f->R.rsi);
         break;
+    case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+    case SYS_MUNMAP:
+        munmap(f->R.rdi);
+        break;
     default:
         break;
     }
 }
 
 void check_addr(uint64_t *ptr) {
-    if (ptr == NULL || is_kernel_vaddr(ptr) || !pml4_get_page(thread_current()->pml4, ptr))
+    if (ptr == NULL || is_kernel_vaddr(ptr) || !spt_find_page(&thread_current()->spt, ptr))
         exit(-1);
 }
 
@@ -283,7 +297,11 @@ int read(int fd, void *buffer, unsigned length) {
     int result = -1;
 
     check_addr(buffer);
-
+    for (unsigned i = 0; i < length; i += PGSIZE) {
+        check_buffer((uint8_t *)buffer + i);
+    }
+    check_buffer((uint8_t *)buffer + length - 1);
+    
     find_fd = get_fd(fd, &root_fd);
     if (find_fd != NULL) {
         if (find_fd->_stdin)
@@ -368,4 +386,36 @@ int dup2(int oldfd, int newfd) {
     list_push_back(&old_root_fd->dup_list, &new_fd->elem);
 
     return newfd;
+}
+
+void check_buffer(uint64_t *buffer) {
+    struct page *p = spt_find_page(&thread_current()->spt, buffer);
+    if (!p->writable&&!p->parent_writable)
+        exit(-1);
+}
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+    struct file_descriptor *root_fd;
+    struct file *file = get_fd(fd, &root_fd)->file;
+
+    if (pg_round_down(offset) != offset)
+        return NULL;
+
+    if (addr == NULL || !is_user_vaddr(addr) || !is_user_vaddr(addr + length) || pg_round_down(addr) != addr)
+        return NULL;
+
+    if (spt_find_page(&thread_current()->spt, addr) != NULL)
+        return NULL;
+
+    if (file == NULL || file_length(file) <= 0)
+        return NULL;
+        
+    if ((int)length <= 0)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap(void *addr) {
+    do_munmap(addr);
 }

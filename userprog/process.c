@@ -705,11 +705,28 @@ install_page(void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool
-lazy_load_segment(struct page *page, void *aux) {
+bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: Load the segment from the file */
     /* TODO: This called when the first page fault occurs on address VA. */
     /* TODO: VA is available when calling this function. */
+    if (page == NULL)
+        return false;
+
+    struct load_aux *seg_aux = (struct load_aux *)aux;
+    struct file *file = seg_aux->file;
+    off_t offset = seg_aux->offset;
+    size_t page_read_bytes = seg_aux->page_read_bytes;
+    size_t page_zero_bytes = seg_aux->page_zero_bytes;
+
+    file_seek(file, offset);
+    /* Load this page. */
+    if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes)
+
+        return false;
+
+    memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
+
+    return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -732,7 +749,6 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);
-
     while (read_bytes > 0 || zero_bytes > 0) {
         /* Do calculate how to fill this page.
          * We will read PAGE_READ_BYTES bytes from FILE
@@ -741,7 +757,12 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
         size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
         /* TODO: Set up aux to pass information to the lazy_load_segment. */
-        void *aux = NULL;
+        struct load_aux *aux = calloc(1, sizeof(struct load_aux));
+        aux->file = file;
+        aux->offset = ofs;
+        aux->page_read_bytes = page_read_bytes;
+        aux->page_zero_bytes = page_zero_bytes;
+
         if (!vm_alloc_page_with_initializer(VM_ANON, upage,
                                             writable, lazy_load_segment, aux))
             return false;
@@ -750,6 +771,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
         read_bytes -= page_read_bytes;
         zero_bytes -= page_zero_bytes;
         upage += PGSIZE;
+        ofs += page_read_bytes;
     }
     return true;
 }
@@ -765,6 +787,12 @@ setup_stack(struct intr_frame *if_) {
      * TODO: You should mark the page is stack. */
     /* TODO: Your code goes here */
 
+    if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1)) {
+        if (vm_claim_page(stack_bottom)) {
+            if_->rsp = USER_STACK;
+            success=true;
+        }
+    }
     return success;
 }
 #endif /* VM */
