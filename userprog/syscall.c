@@ -390,7 +390,7 @@ int dup2(int oldfd, int newfd) {
 
 void check_buffer(uint64_t *buffer) {
     struct page *p = spt_find_page(&thread_current()->spt, buffer);
-    if (!p->writable)
+    if (!p->writable&&!p->parent_writable)
         exit(-1);
 }
 

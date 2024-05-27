@@ -176,7 +176,7 @@ static void vm_stack_growth(void *addr UNUSED) {
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {
-    if (!page->copy_on_write)
+    if (page->frame->ref_cnt == 1)
         return false;
     if (page->frame->ref_cnt > 1) {
         struct frame *new_frame = vm_get_frame();
@@ -216,9 +216,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
         if (write && !page->writable)
             return false;
         return vm_do_claim_page(page);
-    } 
-    // else
-    //     return vm_handle_wp(page);
+    } else
+        return vm_handle_wp(page);
 
     return false;
 }
@@ -290,6 +289,18 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
             // file_aux=aux;
             if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, NULL, aux))
                 return false;
+            child_page = spt_find_page(dst, upage);
+
+            child_page->operations = parent_page->operations;
+            child_page->frame = parent_page->frame;
+            child_page->writable = false;
+            child_page->parent_writable = parent_page->writable;
+
+            lock_acquire(&frame_table_lock);
+            parent_page->frame->ref_cnt++;
+            lock_release(&frame_table_lock);
+
+            pml4_set_page(thread_current()->pml4, child_page->va, child_page->frame->kva, child_page->writable);
             continue;
         }
 
@@ -301,9 +312,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
         child_page->operations = parent_page->operations;
         child_page->frame = parent_page->frame;
         child_page->writable = false;
-        parent_page->writable = false;
-        child_page->copy_on_write = true;
-        parent_page->copy_on_write = true;
+        child_page->parent_writable = parent_page->writable;
 
         lock_acquire(&frame_table_lock);
         parent_page->frame->ref_cnt++;

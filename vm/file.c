@@ -5,7 +5,7 @@
 #include "userprog/process.h"
 #include "threads/mmu.h"
 
-struct lock file_swap_lock;
+extern struct lock file_lock;
 extern struct lock frame_table_lock;
 
 static bool file_backed_swap_in(struct page *page, void *kva);
@@ -61,17 +61,17 @@ static bool file_backed_swap_out(struct page *page) {
     if (page == NULL)
         return false;
 
-    lock_acquire(&file_swap_lock);
+    lock_acquire(&file_lock);
     if (pml4_is_dirty(thread_current()->pml4, page->va)) {
         file_write_at(aux->file, page->frame->kva, aux->page_read_bytes, aux->offset);
-        lock_release(&file_swap_lock);
+        lock_release(&file_lock);
         pml4_set_dirty(thread_current()->pml4, page->va, 0);
     }
 
     pml4_clear_page(thread_current()->pml4, page->va);
     page->frame->page = NULL;
     page->frame = NULL;
-    lock_release(&file_swap_lock);
+    lock_release(&file_lock);
 
     return true;
 }
@@ -80,20 +80,20 @@ static bool file_backed_swap_out(struct page *page) {
 static void file_backed_destroy(struct page *page) {
     struct load_aux *aux = page->uninit.aux;
     struct thread *curr = thread_current();
-    lock_acquire(&file_swap_lock);
+    lock_acquire(&file_lock);
     if (pml4_is_dirty(thread_current()->pml4, page->va)) {
         if (file_write_at(aux->file, page->frame->kva, aux->page_read_bytes, aux->offset) != (int)aux->page_read_bytes) {
-            lock_release(&file_swap_lock);
+            lock_release(&file_lock);
             return false;
         }
         pml4_set_dirty(thread_current()->pml4, page->va, 0);
     }
-    lock_release(&file_swap_lock);
+    lock_release(&file_lock);
 
     if (page->frame && page->frame->page == page) {
-        lock_acquire(&file_swap_lock);
+        lock_acquire(&file_lock);
         free_frame(page->frame);
-        lock_release(&file_swap_lock);
+        lock_release(&file_lock);
     }
     pml4_clear_page(curr->pml4, page->va);
 }
